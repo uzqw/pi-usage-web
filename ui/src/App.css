@@ -1,5 +1,10 @@
 .grid {
   max-width: 1600px;
+  /* #root is a column flexbox and .grid has cross-axis auto margins, so it is
+     fit-content sized: without a definite width the model table's min-content
+     widens .grid past the viewport instead of scrolling inside
+     .modeltable-wrap (narrow screens). 100% == #root's content width. */
+  width: 100%;
   margin: 0 auto;
   padding: 0.9rem 1.25rem;
   font-family: var(--sans);
@@ -47,6 +52,273 @@
 .refresh.failed {
   border-color: #8a3b44;
   color: #ff7b72;
+}
+/* Full-width model usage table: sits between the topbar and the card wall so
+   it escapes the masonry columns. Its own max-height (38svh) + overflow keeps
+   the card wall visible inside the 100svh flex grid; numbers are right-aligned
+   mono, zero cells dim. */
+.modelpanel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem 0.35rem;
+  margin-bottom: 0.6rem;
+  flex-shrink: 0;
+}
+.modelpanel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.modelpanel-head h2 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+.seg {
+  display: flex;
+}
+.seg button {
+  background: #222b3a;
+  color: var(--text-muted);
+  border: 1px solid #344053;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.seg button:first-child {
+  border-radius: 5px 0 0 5px;
+}
+.seg button:last-child {
+  border-radius: 0 5px 5px 0;
+}
+.seg button + button {
+  border-left: none;
+}
+.seg button.on {
+  background: var(--accent-bg);
+  color: var(--text);
+  border-color: var(--accent-border);
+}
+.machine-chips {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.machine-chips button {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  padding: 0.05rem 0.45rem;
+  cursor: pointer;
+}
+.machine-chips button.on {
+  color: var(--text);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.showall {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.modeltable-wrap {
+  max-height: 38svh;
+  overflow: auto;
+  margin-top: 0.35rem;
+}
+table.modeltable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+.modeltable th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-align: left;
+  padding: 0.15rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.modeltable td {
+  padding: 0.12rem 0.4rem;
+  border-bottom: 1px solid rgba(42, 51, 66, 0.45);
+  white-space: nowrap;
+}
+.modeltable .num {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.modeltable th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.modeltable th.sortable.on {
+  color: var(--text);
+}
+.modeltable th.sortable.on::after {
+  content: " ▾";
+}
+.modeltable tbody tr:hover {
+  background: rgba(111, 140, 255, 0.07);
+}
+.modeltable .idx {
+  color: var(--text-muted);
+}
+.modeltable .model {
+  font-family: var(--mono);
+  color: var(--text-h);
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.modeltable .muted {
+  color: var(--text-muted);
+}
+.modeltable tr.expandable {
+  cursor: pointer;
+}
+.modeltable .caret {
+  color: var(--text-muted);
+  margin-right: 0.25rem;
+}
+.modeltable .mchip {
+  margin-left: 0.35rem;
+  font-size: 0.62rem;
+  color: #9aa4ff;
+  border: 1px solid #3a4a6e;
+  border-radius: 4px;
+  padding: 0 0.25rem;
+}
+.modeltable .zero {
+  color: var(--text-muted);
+}
+.modeltable tr.subrow td {
+  background: var(--surface-dim);
+  color: var(--text-muted);
+}
+.modeltable tr.subrow .model.sub {
+  color: var(--text);
+  padding-left: 1.4rem;
+}
+.modeltable .othersrow .model {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.modeltable tfoot .sumrow td {
+  /* Σ stays visible while the 26-model list scrolls (totals are always the
+     untruncated whole, so they must not need a scroll to be read). */
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: none;
+  font-weight: 600;
+}
+.share-col {
+  width: 8rem;
+}
+.share-bar {
+  display: inline-block;
+  vertical-align: middle;
+  width: 4.5rem;
+  height: 4px;
+  background: #262f3e;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.share-bar i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #2f9e63, #4cc38a);
+}
+.share-num {
+  display: inline-block;
+  vertical-align: middle;
+  width: 2.8rem;
+  text-align: right;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+.modelpanel .footnote {
+  margin: 0.25rem 0 0;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+}
+.modeltable .empty {
+  color: var(--text-muted);
+  text-align: center;
+  padding: 0.6rem;
+}
+.mono {
+  font-family: var(--mono);
+}
+/* pi@<host> card: three-window totals + today's top model. */
+.pi-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.pi-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.72rem;
+}
+.pi-label {
+  color: var(--text-muted);
+  width: 3.4rem;
+  flex-shrink: 0;
+}
+.pi-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.pi-cell small {
+  color: var(--text-muted);
+  font-size: 0.58rem;
+}
+.pi-cell b {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+.pi-stats .zero {
+  color: var(--text-muted);
+}
+.pi-top {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pi-top .mono {
+  color: var(--text);
+}
+.pi-models {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: 0.68rem;
+  padding: 0;
+  margin-top: 0.15rem;
+  cursor: pointer;
+}
+.pi-models:hover {
+  text-decoration: underline;
 }
 /* Masonry via CSS columns: cards flow down each column so short cards
    pack up under tall ones instead of leaving grid-row gaps. Order goes
@@ -204,6 +476,25 @@
   color: var(--text-muted);
 }
 @media (max-width: 699px) {
+  .modelpanel {
+    padding: 0.35rem 0.4rem 0.3rem;
+    margin-bottom: 0.4rem;
+  }
+  .modelpanel-head,
+  .modeltable th,
+  .modeltable td {
+    font-size: 0.66rem;
+  }
+  .modeltable-wrap {
+    max-height: 38svh;
+    overflow: auto;
+  }
+  /* Too narrow for ten columns: drop the two least essential ones and let
+     the rest scroll horizontally. */
+  .modeltable .msgs-col,
+  .modeltable .share-col {
+    display: none;
+  }
   .grid {
     padding: 0.5rem;
   }

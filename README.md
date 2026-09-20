@@ -47,6 +47,42 @@ appears as its own `pi@<host>` card: tokens and equivalent cost for
 today, deduplicated across session replays. Point it at this instance
 with `CODEXBAR_URL` and it just shows up — no backend changes needed.
 
+### `models[]` payload and the `$ equiv` figure
+
+Each `pi@<host>` snapshot also carries a top-level `models` array (the
+`windows` array stays as-is): one entry per `(provider, model)` pair
+seen in that machine's pi session logs, so the dashboard can break
+usage down per model. Message ids are deduplicated, because pi
+`--resume` replays old messages into new session files.
+
+```json
+{
+  "provider": "ollama-cloud",
+  "model": "glm-5.3",
+  "today": {"in": 1400000, "out": 92000, "cacheRead": 9100000,
+            "cacheWrite": 0, "cost": 4.78, "msgs": 111},
+  "d7":  {"...": "same shape"},
+  "all": {"...": "same shape"}
+}
+```
+
+- Windows: `today` = local midnight onward, `d7` = today plus the six
+  previous calendar days, `all` = everything on disk. A window key is
+  omitted when it holds no messages, so a missing key means "no data".
+- Token totals are `in + out + cacheRead + cacheWrite`, not
+  `totalTokens`: some providers leave `cacheRead` out of
+  `totalTokens`, and only the component sum is comparable across
+  providers.
+- The UI aggregates `models[]` into a full-width **Model usage** panel
+  above the card wall: top 15 rows by total tokens (rest folded into
+  "others"), switchable Today/7d/All window, per-machine filter, and a
+  `Σ` row that always sums every row, truncated or not.
+
+**`$ equiv` is an estimated equivalent price, never a bill.** It sums
+pi's per-message list prices; subscriptions, credits and free tiers are
+not deducted from it. A model with no recorded price counts as `$0`
+and renders as a dim `–` rather than `$0.00`.
+
 ## Requirements
 
 - Node 20+ (fetcher and UI build).

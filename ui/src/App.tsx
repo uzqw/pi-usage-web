@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import "./App.css";
 
 interface Window {
@@ -17,6 +17,7 @@ interface Provider {
   email?: string | null;
   windows?: Window[];
   credits?: { balance?: number; usedRatio?: number; unlimited?: boolean } | null;
+  models?: ModelRow[];
   error?: string;
   lastError?: string;
   lastOkAt?: string;
@@ -27,6 +28,25 @@ interface HistoryPoint {
   fetchedAt: string;
   status: string;
   windows?: { label: string; usedPercent?: number | null }[];
+}
+
+// Per-(provider,model) usage windows pushed by pi-report (pi@<host> cards).
+// A missing window key means "no data in that window".
+interface ModelUsage {
+  in: number;
+  out: number;
+  cacheRead: number;
+  cacheWrite: number;
+  cost: number;
+  msgs: number;
+}
+
+interface ModelRow {
+  provider: string;
+  model: string;
+  today?: ModelUsage;
+  d7?: ModelUsage;
+  all?: ModelUsage;
 }
 
 // Provider brand accent colors.
@@ -96,6 +116,85 @@ function fmtBalance(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+// ---------------------------------------------------------------------------
+// Model usage formatting. Token counts collapse to K/M/B; zero renders as a
+// dim dash instead of "0" so "no cache writes yet" reads differently from
+// "cache writes are free". Every cell keeps its exact value in `title`.
+// ---------------------------------------------------------------------------
+
+type WinKey = "today" | "d7" | "all";
+
+const WINS: WinKey[] = ["today", "d7", "all"];
+const WIN_LABEL: Record<WinKey, string> = {
+  today: "Today",
+  d7: "7d",
+  all: "All",
+};
+
+function fmtTok(n: number): string {
+  if (n === 0) return "–";
+  if (n < 1e4) return n.toLocaleString("en-US");
+  if (n < 1e6) return `${(n / 1e3).toFixed(1)}K`;
+  if (n < 1e9) return `${(n / 1e6).toFixed(1)}M`;
+  return `${(n / 1e9).toFixed(2)}B`;
+}
+
+function fmtInt(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+// Cost is a list-price equivalent, never a bill.
+const NO_PRICE = "无牌价条目，按$0计";
+
+function fmtCost(c: number): string {
+  return c === 0 ? "–" : `$${c.toFixed(2)}`;
+}
+
+const ZERO: ModelUsage = {
+  in: 0,
+  out: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  cost: 0,
+  msgs: 0,
+};
+
+function addUsage(a: ModelUsage, b: ModelUsage): ModelUsage {
+  return {
+    in: a.in + b.in,
+    out: a.out + b.out,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    cost: a.cost + b.cost,
+    msgs: a.msgs + b.msgs,
+  };
+}
+
+// Unified token count: sum the four components, not totalTokens — devin-style
+// providers leave cacheRead out of totalTokens while pi core includes it.
+function total(u: ModelUsage): number {
+  return u.in + u.out + u.cacheRead + u.cacheWrite;
+}
+
+function TokCell({ n }: { n: number }) {
+  return (
+    <td className={`num${n === 0 ? " zero" : ""}`} title={fmtInt(n)}>
+      {fmtTok(n)}
+    </td>
+  );
+}
+
+function CostCell({ c }: { c: number }) {
+  return (
+    <td
+      className={`num${c === 0 ? " zero" : ""}`}
+      title={c === 0 ? NO_PRICE : `$${c.toFixed(2)}`}
+    >
+      {fmtCost(c)}
+    </td>
+  );
+}
+
 // status ok but nothing worth showing: every window is zero/empty
 // (used:0 with no limit/percent, like opencode's empty "Monthly spend")
 // and credits carry no balance/usedRatio. Hidden like no-session.
@@ -159,14 +258,345 @@ function Avatar({ p }: { p: Provider }) {
 
 const FLASH_GREEN = "#4cc38a";
 
+// pi@<host> card body: three-window totals plus the day's top model. Replaces
+// the generic window rows, whose "Tokens today" number is a raw count that
+// reads badly next to percent-based cards. Falls back to those rows when
+// `models` is absent (older pi-report).
+function PiStats({ p, onFocus }: { p: Provider; onFocus?: () => void }) {
+  const models = p.models || [];
+  const sums: Record<WinKey, ModelUsage> = {
+    today: { ...ZERO },
+    d7: { ...ZERO },
+    all: { ...ZERO },
+  };
+  for (const m of models) {
+    for (const w of WINS) {
+      const u = m[w];
+      if (u) sums[w] = addUsage(sums[w], u);
+    }
+  }
+  const top = models
+    .map((m) => ({ m, u: m.today }))
+    .filter((x): x is { m: ModelRow; u: ModelUsage } => !!x.u && x.u.msgs > 0)
+    .sort((a, b) => total(b.u) - total(a.u) || b.u.cost - a.u.cost)[0];
+  return (
+    <div className="pi-stats">
+      <div className="pi-row">
+        <span className="pi-label">Tokens</span>
+        {WINS.map((w) => (
+          <span key={w} className="pi-cell">
+            <small>{WIN_LABEL[w]}</small>
+            <b title={fmtInt(total(sums[w]))}>{fmtTok(total(sums[w]))}</b>
+          </span>
+        ))}
+      </div>
+      <div className="pi-row">
+        <span className="pi-label">$ equiv</span>
+        {WINS.map((w) => (
+          <span key={w} className="pi-cell">
+            <small>{WIN_LABEL[w]}</small>
+            <b
+              className={sums[w].cost === 0 ? "zero" : ""}
+              title={sums[w].cost === 0 ? NO_PRICE : `$${sums[w].cost.toFixed(2)}`}
+            >
+              {fmtCost(sums[w].cost)}
+            </b>
+          </span>
+        ))}
+      </div>
+      {top && (
+        <p className="pi-top">
+          top: <span className="mono">{top.m.provider}/{top.m.model}</span>{" "}
+          {fmtTok(total(top.u))}
+        </p>
+      )}
+      <button className="pi-models" onClick={onFocus}>
+        ▸ {models.length} models
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model usage panel: full-width table above the card wall, aggregating every
+// pi@<host> snapshot's models[] for one window. Row key is provider+model, so
+// the same model name from two providers stays two rows.
+// ---------------------------------------------------------------------------
+
+interface AggRow {
+  key: string;
+  provider: string;
+  model: string;
+  u: ModelUsage; // current-window total across machines
+  machines: number;
+  per: { machine: string; u: ModelUsage }[];
+}
+
+type SortKey = "tok" | "in" | "out" | "cost";
+
+const TOP_N = 15;
+
+function ModelPanel({
+  providers,
+  machine,
+  setMachine,
+}: {
+  providers: Provider[];
+  machine: string | null;
+  setMachine: (m: string | null) => void;
+}) {
+  const [win, setWin] = useState<WinKey>("today");
+  const [sortBy, setSortBy] = useState<SortKey>("tok");
+  const [showAll, setShowAll] = useState(false);
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const pis = providers.filter(
+    (p) => p.id.startsWith("pi@") && (p.models?.length ?? 0) > 0,
+  );
+  const machines = pis.map((p) => p.id).sort();
+  const shown = machine ? pis.filter((p) => p.id === machine) : pis;
+
+  const byKey = new Map<string, AggRow>();
+  for (const p of shown) {
+    for (const m of p.models || []) {
+      const u = m[win];
+      if (!u || u.msgs <= 0) continue;
+      const key = `${m.provider}/${m.model}`;
+      let row = byKey.get(key);
+      if (!row) {
+        row = {
+          key,
+          provider: m.provider,
+          model: m.model,
+          u: { ...ZERO },
+          machines: 0,
+          per: [],
+        };
+        byKey.set(key, row);
+      }
+      row.u = addUsage(row.u, u);
+      row.machines++;
+      row.per.push({ machine: p.id, u });
+    }
+  }
+  const rows = [...byKey.values()];
+  rows.sort((a, b) => {
+    const tie = () => total(b.u) - total(a.u) || a.model.localeCompare(b.model);
+    if (sortBy === "cost") return b.u.cost - a.u.cost || tie();
+    if (sortBy === "in") return b.u.in - a.u.in || tie();
+    if (sortBy === "out") return b.u.out - a.u.out || tie();
+    return total(b.u) - total(a.u) || b.u.cost - a.u.cost || a.model.localeCompare(b.model);
+  });
+
+  const sum = rows.reduce((a, r) => addUsage(a, r.u), { ...ZERO });
+  const grand = total(sum);
+  const list = showAll ? rows : rows.slice(0, TOP_N);
+  const rest = rows.slice(TOP_N);
+  const others = rest.reduce((a, r) => addUsage(a, r.u), { ...ZERO });
+  const noPrice = rows.filter((r) => r.u.cost === 0).length;
+  const showCacheWrite = sum.cacheWrite !== 0;
+  const cols = 9 + (showCacheWrite ? 1 : 0);
+
+  if (pis.length === 0) return null;
+
+  const shareOf = (u: ModelUsage) => (grand > 0 ? (total(u) / grand) * 100 : 0);
+  const sortable = (k: SortKey, label: string) => (
+    <th
+      className={`num sortable${sortBy === k ? " on" : ""}`}
+      onClick={() => setSortBy(k)}
+      title="sort by this column"
+    >
+      {label}
+    </th>
+  );
+
+  const cells = (u: ModelUsage) => (
+    <>
+      <TokCell n={u.in} />
+      <TokCell n={u.out} />
+      <TokCell n={u.cacheRead} />
+      {showCacheWrite && <TokCell n={u.cacheWrite} />}
+      <CostCell c={u.cost} />
+      <td className="num msgs-col" title={fmtInt(u.msgs)}>
+        {fmtInt(u.msgs)}
+      </td>
+    </>
+  );
+
+  return (
+    <section className="modelpanel">
+      <div className="modelpanel-head">
+        <h2>Model usage</h2>
+        <div className="seg" role="group" aria-label="window">
+          {WINS.map((w) => (
+            <button
+              key={w}
+              className={win === w ? "on" : ""}
+              onClick={() => setWin(w)}
+            >
+              {WIN_LABEL[w]}
+            </button>
+          ))}
+        </div>
+        {machines.length > 1 && (
+          <div className="machine-chips">
+            <button
+              className={machine === null ? "on" : ""}
+              onClick={() => setMachine(null)}
+            >
+              All
+            </button>
+            {machines.map((m) => (
+              <button
+                key={m}
+                className={machine === m ? "on" : ""}
+                onClick={() => setMachine(m)}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        )}
+        <label className="showall">
+          <input
+            type="checkbox"
+            checked={showAll}
+            onChange={(e) => setShowAll(e.target.checked)}
+          />
+          show all
+        </label>
+      </div>
+      <div className="modeltable-wrap">
+        <table className="modeltable">
+          <thead>
+            <tr>
+              <th
+                className={`num sortable${sortBy === "tok" ? " on" : ""}`}
+                onClick={() => setSortBy("tok")}
+                title="sort by total tokens"
+              >
+                #
+              </th>
+              <th>model</th>
+              <th>provider</th>
+              {sortable("in", "input")}
+              {sortable("out", "output")}
+              <th className="num">cacheRead</th>
+              {showCacheWrite && <th className="num">cacheWrite</th>}
+              {sortable("cost", "$ equiv")}
+              <th className="num msgs-col">msgs</th>
+              <th className="share-col">share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {list.map((r, i) => {
+              const pct = shareOf(r.u);
+              const canExpand = r.machines > 1;
+              return (
+                <Fragment key={r.key}>
+                  <tr
+                    className={`${canExpand ? "expandable" : ""}${
+                      expanded === r.key ? " open" : ""
+                    }`}
+                    onClick={
+                      canExpand
+                        ? () =>
+                            setExpanded(expanded === r.key ? null : r.key)
+                        : undefined
+                    }
+                  >
+                    <td className="num idx">{i + 1}</td>
+                    <td className="model">
+                      {canExpand && (
+                        <span className="caret">
+                          {expanded === r.key ? "▾" : "▸"}
+                        </span>
+                      )}
+                      {r.model}
+                      {canExpand && (
+                        <span className="mchip">×{r.machines}机</span>
+                      )}
+                    </td>
+                    <td className="muted">{r.provider}</td>
+                    {cells(r.u)}
+                    <td className="share-col">
+                      <span className="share-bar">
+                        <i style={{ width: `${Math.min(100, pct * 2.2)}%` }} />
+                      </span>
+                      <span className="share-num">{pct.toFixed(1)}%</span>
+                    </td>
+                  </tr>
+                  {canExpand &&
+                    expanded === r.key &&
+                    r.per.map((s) => (
+                      <tr key={`${r.key}/${s.machine}`} className="subrow">
+                        <td />
+                        <td className="model sub">{s.machine}</td>
+                        <td />
+                        {cells(s.u)}
+                        <td />
+                      </tr>
+                    ))}
+                </Fragment>
+              );
+            })}
+            {!showAll && rest.length > 0 && (
+              <tr className="othersrow">
+                <td />
+                <td className="model">others ({rest.length} models)</td>
+                <td />
+                {cells(others)}
+                <td className="share-col">
+                  <span className="share-bar">
+                    <i
+                      style={{
+                        width: `${Math.min(100, shareOf(others) * 2.2)}%`,
+                      }}
+                    />
+                  </span>
+                  <span className="share-num">{shareOf(others).toFixed(1)}%</span>
+                </td>
+              </tr>
+            )}
+            {rows.length === 0 && (
+              <tr>
+                <td className="empty" colSpan={cols}>
+                  no model data in this window
+                </td>
+              </tr>
+            )}
+          </tbody>
+          <tfoot>
+            <tr className="sumrow">
+              <td />
+              <td className="model">
+                Σ {rows.length} models
+                {!showAll && rest.length > 0 ? ` (top ${TOP_N})` : ""}
+              </td>
+              <td />
+              {cells(sum)}
+              <td className="share-col" />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p className="footnote">
+        $ equiv = 牌价折算估算，非实付；{noPrice} 个模型无牌价（按 $0 计）
+      </p>
+    </section>
+  );
+}
+
 function Card({
   p,
   history,
   flash,
+  onFocus,
 }: {
   p: Provider;
   history?: HistoryPoint[];
   flash?: boolean;
+  onFocus?: () => void;
 }) {
   const color = accent(p.id);
   // Inline borderColor wins over the accent border-left, so the flash
@@ -209,28 +639,32 @@ function Card({
         {p.name}
         {p.plan && <span className="plan">{p.plan}</span>}
       </h2>
-      {(p.windows || []).map((w) => (
-        <div key={w.label} className="window">
-          <div className="window-head">
-            <span>{w.label}</span>
-            <span>{usageText(w)}</span>
-          </div>
-          {w.usedPercent != null && (
-            <div className="bar">
-              <div
-                className={barClass(w.usedPercent)}
-                style={{ width: `${Math.min(100, w.usedPercent)}%` }}
-              />
+      {p.models?.length ? (
+        <PiStats p={p} onFocus={onFocus} />
+      ) : (
+        (p.windows || []).map((w) => (
+          <div key={w.label} className="window">
+            <div className="window-head">
+              <span>{w.label}</span>
+              <span>{usageText(w)}</span>
             </div>
-          )}
-          {w.resetAt && (
-            <small>
-              <span className="resets-prefix">resets in </span>
-              {resetIn(w.resetAt)}
-            </small>
-          )}
-        </div>
-      ))}
+            {w.usedPercent != null && (
+              <div className="bar">
+                <div
+                  className={barClass(w.usedPercent)}
+                  style={{ width: `${Math.min(100, w.usedPercent)}%` }}
+                />
+              </div>
+            )}
+            {w.resetAt && (
+              <small>
+                <span className="resets-prefix">resets in </span>
+                {resetIn(w.resetAt)}
+              </small>
+            )}
+          </div>
+        ))
+      )}
       {p.credits?.unlimited ? (
         <p className="credits">Credits: unlimited</p>
       ) : (
@@ -260,6 +694,9 @@ function Card({
 function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [history, setHistory] = useState<Record<string, HistoryPoint[]>>({});
+  // Which pi@<host> the model panel is focused on (null = all machines).
+  // Lifted out of ModelPanel so the pi card's "N models" button can drive it.
+  const [machine, setMachine] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
@@ -451,6 +888,11 @@ function App() {
         </button>
       </div>
       {error && <p className="error">Backend unreachable: {error}</p>}
+      <ModelPanel
+        providers={providers}
+        machine={machine}
+        setMachine={setMachine}
+      />
       <div className="cards">
         {[...providers]
           .filter(isVisible)
@@ -461,6 +903,9 @@ function App() {
               p={p}
               history={history[p.id]}
               flash={justRefreshed.has(p.id)}
+              onFocus={() =>
+                setMachine((m) => (m === p.id ? null : p.id))
+              }
             />
           ))}
       </div>

@@ -209,6 +209,7 @@ routerAdd("POST", "/api/codexbar/snapshot", (e) => {
         email: prevData.email || null,
         windows: prevData.windows || null,
         credits: prevData.credits || null,
+        models: prevData.models || null,
         lastOkAt: prevData.lastOkAt || prev.getString("fetchedAt"),
       };
     }
@@ -223,6 +224,7 @@ routerAdd("POST", "/api/codexbar/snapshot", (e) => {
       email: fallback.email,
       windows: fallback.windows,
       credits: fallback.credits,
+      models: fallback.models,
       lastError: body.error || null,
       lastOkAt: fallback.lastOkAt,
     });
@@ -234,6 +236,7 @@ routerAdd("POST", "/api/codexbar/snapshot", (e) => {
       email: body.email,
       windows: body.windows,
       credits: body.credits,
+      models: body.models,
       error: body.error,
     });
   }
