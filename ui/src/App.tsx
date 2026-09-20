@@ -778,7 +778,12 @@ function App() {
   const refresh = async () => {
     setRefreshing(true);
     setRefreshFailed(false);
-    const visibleIds = providers.filter(isVisible).map((p) => p.id);
+    // Only fetcher-driven (pull) cards join the wait set. pi@ cards are
+    // push-based (pi-report's own 15-min loop) — the refresh round never
+    // rewrites them, so waiting on them stalls the progress bar until
+    // the 90s deadline. They still flash green if they happen to push.
+    const refreshable = (p: Provider) => isVisible(p) && !p.id.startsWith("pi@");
+    const visibleIds = providers.filter(refreshable).map((p) => p.id);
     visibleIdsRef.current = new Set(visibleIds);
     setProgress({ done: 0, total: visibleIds.length });
     const clickedAt = Date.now();
