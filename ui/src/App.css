@@ -22,22 +22,27 @@
   font-size: 1.2rem;
   letter-spacing: -0.02em;
 }
-.refresh {
+.refresh,
+.theme-toggle {
   position: relative;
   overflow: hidden;
-  background: #222b3a;
+  background: var(--btn-bg);
   color: var(--text);
-  border: 1px solid #344053;
+  border: 1px solid var(--btn-border);
   border-radius: 6px;
   padding: 0.3rem 0.8rem;
   font-size: 0.8rem;
   cursor: pointer;
 }
-.refresh:hover:not(:disabled) {
-  background: #2a3446;
+.refresh:hover:not(:disabled),
+.theme-toggle:hover {
+  background: var(--btn-hover);
 }
 .refresh:disabled {
   cursor: default;
+}
+.theme-toggle {
+  margin-left: 0.4rem;
 }
 .refresh-fill {
   position: absolute;
@@ -50,8 +55,8 @@
   position: relative;
 }
 .refresh.failed {
-  border-color: #8a3b44;
-  color: #ff7b72;
+  border-color: var(--err-border);
+  color: var(--err);
 }
 /* Full-width model usage table: sits between the topbar and the card wall so
    it escapes the masonry columns. Its own max-height (38svh) + overflow keeps
@@ -79,9 +84,9 @@
   display: flex;
 }
 .seg button {
-  background: #222b3a;
+  background: var(--btn-bg);
   color: var(--text-muted);
-  border: 1px solid #344053;
+  border: 1px solid var(--btn-border);
   padding: 0.12rem 0.5rem;
   font-size: 0.72rem;
   cursor: pointer;
@@ -152,7 +157,7 @@ table.modeltable {
 }
 .modeltable td {
   padding: 0.12rem 0.4rem;
-  border-bottom: 1px solid rgba(42, 51, 66, 0.45);
+  border-bottom: 1px solid var(--row-border);
   white-space: nowrap;
 }
 .modeltable .num {
@@ -196,8 +201,8 @@ table.modeltable {
 .modeltable .mchip {
   margin-left: 0.35rem;
   font-size: 0.62rem;
-  color: #9aa4ff;
-  border: 1px solid #3a4a6e;
+  color: var(--chip);
+  border: 1px solid var(--chip-border);
   border-radius: 4px;
   padding: 0 0.25rem;
 }
@@ -234,7 +239,7 @@ table.modeltable {
   vertical-align: middle;
   width: 4.5rem;
   height: 4px;
-  background: #262f3e;
+  background: var(--bar-bg);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -332,15 +337,9 @@ table.modeltable {
 
 @media (min-width: 700px) {
   .grid {
-    height: 100svh;
+    min-height: 100svh;
     display: flex;
     flex-direction: column;
-  }
-  .card {
-    overflow: hidden;
-  }
-  body {
-    overflow: hidden;
   }
 }
 .card {
@@ -393,11 +392,11 @@ table.modeltable {
 }
 .status-error {
   background: var(--surface-dim);
-  border-color: #4a2b31;
-  border-left-color: #8a3b44;
+  border-color: var(--err-border);
+  border-left-color: var(--err-border);
 }
 .error {
-  color: #ff7b72;
+  color: var(--err);
   font-size: 0.75rem;
 }
 /* Failed refresh with retained data: keep the card, flag the stale numbers. */
@@ -408,8 +407,8 @@ table.modeltable {
   margin-left: auto;
   font-size: 0.62rem;
   font-weight: 400;
-  color: #9aa4ff;
-  border: 1px solid #3a4a6e;
+  color: var(--chip);
+  border: 1px solid var(--chip-border);
   border-radius: 4px;
   padding: 0 0.3rem;
 }
@@ -426,7 +425,7 @@ table.modeltable {
 }
 .bar {
   height: 4px;
-  background: #262f3e;
+  background: var(--bar-bg);
   border-radius: 2px;
   margin: 0.2rem 0;
   overflow: hidden;
@@ -454,8 +453,8 @@ table.modeltable {
 }
 .stale {
   margin-left: 0.35rem;
-  color: #e0b45c;
-  border: 1px solid #5a4a26;
+  color: var(--warn);
+  border: 1px solid var(--warn-border);
   border-radius: 4px;
   padding: 0 0.25rem;
 }

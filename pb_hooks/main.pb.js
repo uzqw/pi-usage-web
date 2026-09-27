@@ -20,6 +20,8 @@ routerAdd("GET", "/api/codexbar/health", (e) => {
 
 routerAdd("GET", "/api/codexbar/providers", (e) => {
   const names = {
+    // ponytail: claude removed — account banned by aggressive usage polling;
+    // do NOT re-add without a >=15m jittered interval and no 429 retry.
     codex: "Codex",
     kimi: "Kimi",
     ollama: "Ollama",
@@ -117,11 +119,13 @@ routerAdd("POST", "/api/codexbar/refresh", (e) => {
   // Always post back to loopback: the UI may be reached via 0.0.0.0 or a
   // LAN IP, and e.request.host would send the fetcher somewhere dead.
   const pbUrl = "http://127.0.0.1:8099";
-  // Guard on the node cmdline only — matching 'fetch.mjs --once' plainly
-  // also matches this wrapper script itself, so nothing ever spawned.
+  // Guard on the node cmdline only — matching 'fetch.mjs' plainly also
+  // matches this wrapper script itself, so nothing ever spawned. Match both
+  // loop and --once processes: a manual refresh must never run concurrently
+  // with the resident loop (double-polling providers from two processes).
   let already = false;
   try {
-    $os.cmd("pgrep", "-f", "node .*fetch\\.mjs --once").run();
+    $os.cmd("pgrep", "-f", "node .*fetch\\.mjs").run();
     already = true;
   } catch (_) {}
   if (!already) {

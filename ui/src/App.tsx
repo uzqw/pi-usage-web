@@ -334,7 +334,7 @@ interface AggRow {
 
 type SortKey = "tok" | "in" | "out" | "cost";
 
-const TOP_N = 15;
+const TOP_N = 3;
 
 function ModelPanel({
   providers,
@@ -347,7 +347,12 @@ function ModelPanel({
 }) {
   const [win, setWin] = useState<WinKey>("today");
   const [sortBy, setSortBy] = useState<SortKey>("tok");
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(
+    () => localStorage.getItem("showAllModels") === "1",
+  );
+  useEffect(() => {
+    localStorage.setItem("showAllModels", showAll ? "1" : "0");
+  }, [showAll]);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const pis = providers.filter(
@@ -699,6 +704,13 @@ function App() {
   const [machine, setMachine] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(
+    () => (localStorage.getItem("theme") as "light") || "dark",
+  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("theme", theme);
+  }, [theme]);
   const [refreshFailed, setRefreshFailed] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -890,6 +902,13 @@ function App() {
                   : "Refreshing…"
                 : "Refresh"}
           </span>
+        </button>
+        <button
+          className="theme-toggle"
+          onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          title="Toggle light/dark theme"
+        >
+          {theme === "dark" ? "☀" : "☾"}
         </button>
       </div>
       {error && <p className="error">Backend unreachable: {error}</p>}

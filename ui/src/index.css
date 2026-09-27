@@ -14,6 +14,17 @@
   --social-bg: rgba(42, 51, 66, 0.5);
   --shadow:
     rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+  --btn-bg: #222b3a;
+  --btn-border: #344053;
+  --btn-hover: #2a3446;
+  --bar-bg: #262f3e;
+  --chip: #9aa4ff;
+  --chip-border: #3a4a6e;
+  --err: #ff7b72;
+  --err-border: #8a3b44;
+  --warn: #e0b45c;
+  --warn-border: #5a4a26;
+  --row-border: rgba(42, 51, 66, 0.45);
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
@@ -28,6 +39,38 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Light theme — high contrast for e-ink. Toggle via [data-theme] on <html>. */
+[data-theme='light'] {
+  --text: #1a2230;
+  --text-muted: #5a6478;
+  --text-h: #0b0f16;
+  --bg: #f2f4f7;
+  --surface: #ffffff;
+  --surface-dim: #e8ecf2;
+  --border: #c8d0dc;
+  --code-bg: #e8ecf2;
+  --accent: #3b5bdb;
+  --accent-bg: rgba(59, 91, 219, 0.1);
+  --accent-border: rgba(59, 91, 219, 0.45);
+  --social-bg: rgba(200, 208, 220, 0.5);
+  --shadow:
+    rgba(0, 0, 0, 0.12) 0 10px 15px -3px, rgba(0, 0, 0, 0.08) 0 4px 6px -2px;
+  --btn-bg: #e8ecf2;
+  --btn-border: #c8d0dc;
+  --btn-hover: #dde3ec;
+  --bar-bg: #dde3ec;
+  --chip: #3b5bdb;
+  --chip-border: #aab8f0;
+  --err: #c92a2a;
+  --err-border: #e8a0a0;
+  --warn: #9c6b12;
+  --warn-border: #d8b56a;
+  --row-border: rgba(200, 208, 220, 0.6);
+  color-scheme: light;
+  color: var(--text);
+  background: var(--bg);
 }
 
 #root {

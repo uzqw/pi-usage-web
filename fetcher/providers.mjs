@@ -7,10 +7,11 @@
 //
 // Each fetch() returns a normalized snapshot or throws {code:"no-session"|"error"}.
 
+import { readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { getCookieHeader, getLocalStorage, chromeUserAgent } from "./chrome-credentials.mjs";
+import { getCookieHeader, getLocalStorage, chromeUserAgent, listProfiles } from "./chrome-credentials.mjs";
 import { guardedFetch, noSession, httpErr as err } from "./http.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -372,7 +373,9 @@ function normalizeOllama(html) {
     const i = html.indexOf(label);
     if (i < 0) return null;
     // Bound the block at the next usage label so fields don't bleed across.
-    const tail = html.slice(i + label.length, i + label.length + 4000);
+    // ponytail: 4000 → 12000 — the weekly block embeds one button per model
+    // used that week, so it easily exceeds 4k and its data-time fell outside.
+    const tail = html.slice(i + label.length, i + label.length + 12000);
     const next = ["Monthly usage", "Session usage", "Hourly usage", "Weekly usage"]
       .filter((l) => l !== label)
       .map((l) => tail.indexOf(l))
@@ -420,9 +423,37 @@ function normalizeOllama(html) {
 
 // CommandCode: better-auth cookie on api.commandcode.ai billing endpoints
 // (mirrors CommandCodeUsageFetcher — credits + subscriptions).
+// The default cookie pick is the most-recently-used Chrome profile, which
+// may hold an expired session while a different profile's cookie still
+// works — so probe every profile that has one (>=500ms apart) and use the
+// first that answers.
 export async function fetchCommandCode() {
-  const cookie = getCookieHeader("commandcode.ai");
-  if (!cookie) throw noSession(0, "no commandcode.ai cookies in Chrome");
+  let cookie = null;
+  let tried = 0;
+  for (const p of listProfiles()) {
+    let c;
+    try {
+      c = getCookieHeader("commandcode.ai", { profile: p.dir });
+    } catch {
+      continue;
+    }
+    if (!c || !c.includes("session_token")) continue;
+    tried++;
+    // GET, not HEAD: better-auth answers HEAD 401 even for live sessions
+    // (its middleware treats non-GET as CSRF-unsafe). The real credits call
+    // is cheap and idempotent, so just make it.
+    const probe = await fetch("https://api.commandcode.ai/internal/billing/credits", {
+      headers: { Cookie: c, Accept: "application/json", Origin: "https://commandcode.ai", "User-Agent": chromeUserAgent() },
+      signal: AbortSignal.timeout(45_000),
+      redirect: "manual",
+    }).catch(() => null);
+    if (probe && probe.status !== 401 && probe.status !== 403) {
+      cookie = c;
+      break;
+    }
+    if (tried > 1) await sleep(500);
+  }
+  if (!cookie) throw noSession(401, "no working commandcode.ai session — sign in at commandcode.ai in Chrome");
   const headers = {
     Cookie: cookie,
     Accept: JSON_ACCEPT,
@@ -678,6 +709,10 @@ function normalizeGrokCredits(body) {
     const used = Number(config.onDemandUsed?.val);
     if (cap > 0 && Number.isFinite(used)) {
       usedPercent = Math.min(100, Math.max(0, Math.round((used / cap) * 1000) / 10));
+    } else if (cap === 0 && used === 0) {
+      // ponytail: cap 0 + used 0 = nothing to spend → show 0% not "unknown",
+      // else the card hides entirely whenever the account sits idle.
+      usedPercent = 0;
     }
   }
   if (usedPercent == null && !resetAt) throw err("grok: unparseable credits response");
@@ -1063,6 +1098,243 @@ function normalizeOpenCode(text, workspaceID) {
   };
 }
 
+// ------------------------------------------------------------------ claude
+
+// Claude subscription: OAuth usage API first (CodexBar's preferred source —
+// no Cloudflare in front of api.anthropic.com, unlike claude.ai which
+// challenges datacenter IPs), web session-key as fallback.
+//
+// OAuth: ~/.claude/.credentials.json → claudeAiOauth {accessToken,
+// refreshToken, expiresAt}. GET https://api.anthropic.com/api/oauth/usage
+// with `anthropic-beta: oauth-2025-04-20` and a claude-code/<ver> UA
+// (ClaudeOAuthUsageFetcher). Requires the user:profile scope. Expired
+// tokens refresh once in memory against platform.claude.com/v1/oauth/token
+// (client_id 9d1c250a-…, the public Claude Code client) — never written
+// back; the CLI owns the file and rotates refresh tokens.
+//
+// Web: Cookie sessionKey=sk-ant-… from any Chrome profile →
+// claude.ai/api/organizations → /{org}/usage (ClaudeWebAPIFetcher).
+//
+// Anti-ban: guardedFetch (no 401/403 retry, one clamped 429 retry, CF
+// abort, per-round block cooldown) + CodexBar's ClaudeOAuthUsageRateLimitGate
+// equivalent: any 429/block puts the provider in a 5-minute cooldown that
+// survives across rounds.
+const claudeBlocked = { until: 0 };
+const CLAUDE_BLOCK_MS = 5 * 60_000; // ClaudeOAuthUsageRateLimitGate.defaultCooldown
+// --once runs are fresh processes, so the memory cooldown must be mirrored
+// to disk or the UI refresh button punches straight through a 429 cooldown.
+const CLAUDE_BLOCK_FILE = join(tmpdir(), "pi-usage-claude-block.json");
+const CLAUDE_CREDENTIALS = join(homedir(), ".claude/.credentials.json");
+const CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+
+function claudeBlockRemaining() {
+  if (Date.now() < claudeBlocked.until) return claudeBlocked.until;
+  try {
+    const until = Number(JSON.parse(readFileSync(CLAUDE_BLOCK_FILE, "utf8")).until) || 0;
+    if (until > Date.now()) {
+      claudeBlocked.until = until;
+      return until;
+    }
+  } catch {}
+  return 0;
+}
+
+function claudeBlock(ms) {
+  claudeBlocked.until = Date.now() + ms;
+  try {
+    writeFileSync(CLAUDE_BLOCK_FILE, JSON.stringify({ until: claudeBlocked.until }));
+  } catch {}
+}
+
+export async function fetchClaude() {
+  const blockedUntil = claudeBlockRemaining();
+  if (blockedUntil) {
+    throw err(`claude: rate-limited, cooling down until ${new Date(blockedUntil).toISOString()}`);
+  }
+  try {
+    return await fetchClaudeOAuth();
+  } catch (e) {
+    if (e.code !== "no-session") {
+      // Real API failure (429/server) — don't compound it with a web probe.
+      throw e;
+    }
+  }
+  return fetchClaudeWeb();
+}
+
+async function claudeAccessToken() {
+  let creds;
+  try {
+    creds = JSON.parse(await readFile(CLAUDE_CREDENTIALS, "utf8")).claudeAiOauth;
+  } catch {
+    return null;
+  }
+  if (!creds?.accessToken) return null;
+  if (!(creds.scopes || []).includes("user:profile")) {
+    throw noSession(0, "claude OAuth token missing user:profile scope — run `claude login`");
+  }
+  if (Number(creds.expiresAt) > Date.now() + 60_000) return creds.accessToken;
+  if (!creds.refreshToken) return null;
+  // In-memory refresh only (mirrors codexAccessToken): writing back would
+  // race the CLI's own rotation.
+  let res;
+  try {
+    res = await guardedFetch("claude", "https://platform.claude.com/v1/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: creds.refreshToken,
+        client_id: CLAUDE_OAUTH_CLIENT_ID,
+      }),
+    });
+  } catch (e) {
+    if (e.code === "no-session") {
+      // invalid_grant is permanent: without a block, every round would retry
+      // the token POST and then hammer claude.ai via the web fallback.
+      claudeBlock(30 * 60_000);
+      throw noSession(401, "claude refresh token rejected — run `claude login`");
+    }
+    throw e;
+  }
+  const body = await res.json().catch(() => null);
+  if (!body?.access_token) {
+    throw noSession(res.status, "claude token refresh failed — run `claude login`");
+  }
+  return body.access_token;
+}
+
+async function fetchClaudeOAuth() {
+  const token = await claudeAccessToken();
+  if (!token) throw noSession(0, "no ~/.claude/.credentials.json — run `claude login`");
+  const ver = process.env.CLAUDE_CODE_VERSION || "2.1.0";
+  let res;
+  try {
+    res = await guardedFetch("claude", "https://api.anthropic.com/api/oauth/usage", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "anthropic-beta": "oauth-2025-04-20",
+        "User-Agent": `claude-code/${ver}`,
+      },
+    });
+  } catch (e) {
+    // 429/cooldown from guardedFetch → hold the token-level block like
+    // CodexBar's rate-limit gate so we never hammer the endpoint.
+    claudeBlock(CLAUDE_BLOCK_MS);
+    throw e;
+  }
+  const body = await res.json().catch(() => null);
+  if (res.status !== 200 || !body) throw err(`claude oauth usage HTTP ${res.status}`);
+  return normalizeClaude(body, null, null, "OAuth");
+}
+
+async function fetchClaudeWeb() {
+  // Scan every Chrome profile for a sessionKey — the default pick is the
+  // most-recently-used profile with ANY claude.ai cookie, which may be a
+  // logged-out one while a different profile holds the live session.
+  let sessionKey = null;
+  for (const p of listProfiles()) {
+    let c;
+    try {
+      c = getCookieHeader("claude.ai", { profile: p.dir });
+    } catch {
+      continue;
+    }
+    sessionKey = c
+      ?.split(";")
+      .map((s) => s.trim())
+      .find((s) => s.startsWith("sessionKey=sk-ant-"))
+      ?.slice("sessionKey=".length);
+    if (sessionKey) break;
+  }
+  if (!sessionKey) {
+    throw noSession(0, "no claude.ai sessionKey cookie — sign in at claude.ai in Chrome");
+  }
+  const headers = {
+    Cookie: `sessionKey=${sessionKey}`,
+    Accept: "application/json",
+    "Accept-Language": LANG,
+    "User-Agent": chromeUserAgent(),
+  };
+  const get = async (path) => {
+    let r;
+    try {
+      r = await guardedFetch("claude", `https://claude.ai/api${path}`, { headers });
+    } catch (e) {
+      // CF challenges / 429 on claude.ai get the same cooldown treatment.
+      claudeBlock(CLAUDE_BLOCK_MS);
+      throw e;
+    }
+    return { status: r.status, body: await r.json().catch(() => null) };
+  };
+  const orgs = await get("/organizations");
+  if (orgs.status !== 200 || !Array.isArray(orgs.body) || !orgs.body.length) {
+    throw err(`claude organizations HTTP ${orgs.status}`);
+  }
+  const org =
+    orgs.body.find((o) => o.capabilities?.includes("chat")) ||
+    orgs.body.find((o) => !o.api_only) ||
+    orgs.body[0];
+  await sleep(500);
+  const usage = await get(`/organizations/${org.uuid}/usage`);
+  if (usage.status !== 200 || !usage.body) throw err(`claude usage HTTP ${usage.status}`);
+  await sleep(500);
+  const account = await get("/account").catch(() => null); // best-effort
+  return normalizeClaude(usage.body, org, account?.body, "Web");
+}
+
+function normalizeClaude(u, org, account, source) {
+  const iso = (s) => {
+    const t = Date.parse(s);
+    return Number.isNaN(t) ? null : new Date(t).toISOString();
+  };
+  const win = (label, w) =>
+    w && typeof w === "object" && w.utilization != null
+      ? {
+          label,
+          usedPercent: Math.min(100, Math.max(0, Math.round(Number(w.utilization) * 10) / 10)),
+          resetAt: w.resets_at ? iso(w.resets_at) : null,
+        }
+      : null;
+  const windows = [
+    win("5h window", u.five_hour),
+    win("Weekly", u.seven_day),
+    win("Weekly (Sonnet)", u.seven_day_sonnet),
+    win("Weekly (Opus)", u.seven_day_opus),
+    win("Daily Routines", u.seven_day_routines || u.seven_day_cowork),
+  ].filter(Boolean);
+  // Newer shape (ClaudeScopedWeeklyLimitMapper): limits[] entries with
+  // kind=weekly_scoped + scope.model.display_name name a per-model weekly
+  // window (e.g. Fable promo). "All models" scopes stay in the Weekly row.
+  for (const l of u.limits || []) {
+    const name = l?.scope?.model?.display_name;
+    if (l?.kind !== "weekly_scoped" || l?.group !== "weekly" || !name) continue;
+    if (/^all models$/i.test(name)) continue;
+    const w = win(`${name} only`, { utilization: l.percent, resets_at: l.resets_at });
+    if (w) windows.push(w);
+  }
+  const extra = u.extra_usage;
+  if (extra?.is_enabled && Number(extra.monthly_limit) > 0) {
+    windows.push({
+      label: "Extra usage",
+      usedPercent: Math.min(100, Math.round((Number(extra.used_credits || 0) / Number(extra.monthly_limit)) * 1000) / 10),
+      used: Number(extra.used_credits || 0),
+      limit: Number(extra.monthly_limit),
+    });
+  }
+  if (!windows.length) throw err("claude: no usage windows in response");
+  const membership = (account?.memberships || []).find((m) => m.organization?.uuid === org?.uuid) || account?.memberships?.[0];
+  const tier = membership?.organization?.rate_limit_tier || membership?.seat_tier;
+  return {
+    status: "ok",
+    plan: (tier ? tier.replace(/^default_claude_|_tier$/g, "").replaceAll("_", " ") : "Claude") + (source ? ` (${source})` : ""),
+    email: account?.email_address || null,
+    organization: org?.name || null,
+    windows,
+  };
+}
+
 // -------------------------------------------------------------- registry
 
 // Providers whose sessions were absent in the leg-1 survey.
@@ -1072,6 +1344,8 @@ export const NO_SESSION_PROVIDERS = [
 ];
 
 export const PROVIDERS = [
+  // ponytail: claude disabled — account banned; re-add entry to resume polling
+  // { id: "claude", name: "Claude", fetch: fetchClaude },
   { id: "codex", name: "Codex", fetch: fetchCodex },
   { id: "kimi", name: "Kimi", fetch: fetchKimi },
   { id: "ollama", name: "Ollama", fetch: fetchOllama },
@@ -1219,3 +1493,13 @@ function normalizeOpenAIGrants(body) {
     },
   };
 }
+
+// Test-only hook for fetcher/test/claude.test.mjs (node --test). Exposes
+// module-private claude internals; never used by production callers.
+export const __claudeTest = {
+  normalizeClaude,
+  claudeAccessToken,
+  fetchClaudeOAuth,
+  claudeBlocked,
+  CLAUDE_BLOCK_MS,
+};
