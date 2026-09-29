@@ -11,7 +11,7 @@ Thanks for your interest in improving pi-usage-web!
 
    ```sh
    cd ui && npm install && npm run build   # must pass
-   node fetcher/fetch.mjs --once            # must complete without errors
+   node fetcher/fetch.mjs                   # must complete without errors
    ```
 
 4. Open a pull request describing what changed and why.

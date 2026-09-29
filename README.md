@@ -26,8 +26,7 @@ TypeScript) frontend. No Swift, no native app.
 cd ui && npm install && npm run build   # produces ui/dist
 pocketbase serve --dir pb_data --hooksDir pb_hooks \
   --publicDir ui/dist --http 127.0.0.1:8099
-node fetcher/fetch.mjs --once          # one refresh cycle
-node fetcher/fetch.mjs                 # loop (adaptive interval)
+node fetcher/fetch.mjs                 # one refresh cycle (manual)
 ```
 
 Then open http://127.0.0.1:8099/ — PocketBase serves the React build

@@ -110,8 +110,7 @@ routerAdd("GET", "/api/codexbar/history", (e) => {
 
 // Kick off one fetcher round in the background and return immediately — a
 // full sweep takes tens of seconds. Spawns via `nohup ... &` so the goja
-// handler doesn't block and no zombie child is left behind; pgrep guards
-// against overlapping runs from repeat clicks.
+// handler doesn't block and no zombie child is left behind.
 routerAdd("POST", "/api/codexbar/refresh", (e) => {
   const hooksDir =
     typeof __hooks === "string" ? __hooks : $os.getwd() + "/pb_hooks";
@@ -123,23 +122,91 @@ routerAdd("POST", "/api/codexbar/refresh", (e) => {
   // matches this wrapper script itself, so nothing ever spawned. Match both
   // loop and --once processes: a manual refresh must never run concurrently
   // with the resident loop (double-polling providers from two processes).
-  let already = false;
+  // Kill any in-flight round and respawn: a round started before this
+  // click saves early providers with fetchedAt < clickedAt, which would
+  // stall the UI's progress bar until the 90s deadline. With scheduling
+  // now living in the PB cron below (no resident loop), pkill can only
+  // ever hit an actively-running --once round.
+  try {
+    $os.cmd("pkill", "-f", "node .*fetch\\.mjs").run();
+  } catch (_) {}
+  const script =
+    "PB_URL=" + pbUrl + " nohup node " + fetcher +
+    " --once >>/tmp/codexbar-fetch.log 2>&1 &";
+  try {
+    $os.cmd("sh", "-c", script).run();
+  } catch (err) {
+    return e.json(500, { ok: false, error: String(err) });
+  }
+  return e.json(200, { ok: true, started: true });
+});
+
+// Adaptive scheduler — replaces fetch.mjs's resident loop mode. Cron
+// wakes every 2m and runs a round only when the interval implied by UI
+// heartbeat recency has elapsed (<5m ago: 2m, <1h: 5m, <4h: 15m, else
+// 30m). The elapsed-since timer derives from the latest snapshot's
+// fetchedAt, so manual refreshes reset it too and restarts don't lose
+// state. goja top-level decls aren't visible in callbacks, so the spawn
+// logic is inlined (same shape as /refresh above).
+// ponytail: dropped the reset-alignment wake and REFRESH_MINUTES cap
+// from the loop version — re-add if quota-reset freshness matters.
+cronAdd("codexbar-fetch", "*/2 * * * *", () => {
+  const hooksDir =
+    typeof __hooks === "string" ? __hooks : $os.getwd() + "/pb_hooks";
+  const fetcher = hooksDir + "/../fetcher/fetch.mjs";
+  const pbUrl = "http://127.0.0.1:8099";
+
+  let lastActiveAt = null;
+  try {
+    const f = $app.findRecordsByFilter(
+      "app_state",
+      "key = {:k}",
+      "",
+      1,
+      0,
+      { k: "lastActiveAt" },
+    );
+    if (f.length) lastActiveAt = f[0].getString("value");
+  } catch (_) {}
+  const age = lastActiveAt
+    ? Date.now() - new Date(lastActiveAt).getTime()
+    : Infinity;
+  const intervalMs =
+    age < 5 * 60_000
+      ? 2 * 60_000
+      : age < 3600_000
+        ? 5 * 60_000
+        : age < 4 * 3600_000
+          ? 15 * 60_000
+          : 30 * 60_000;
+
+  let lastFetchAt = null;
+  try {
+    const f = $app.findRecordsByFilter(
+      "usage_snapshots",
+      "id != ''",
+      "-fetchedAt",
+      1,
+      0,
+    );
+    if (f.length) lastFetchAt = f[0].getString("fetchedAt");
+  } catch (_) {}
+  const since = lastFetchAt
+    ? Date.now() - new Date(String(lastFetchAt).replace(" ", "T")).getTime()
+    : Infinity;
+  if (since < intervalMs) return;
+
+  // Skip if a round is already running (e.g. a manual refresh).
   try {
     $os.cmd("pgrep", "-f", "node .*fetch\\.mjs").run();
-    already = true;
+    return;
   } catch (_) {}
-  if (!already) {
-    const script =
-      "PB_URL=" + pbUrl + " nohup node " + fetcher +
-      " --once >>/tmp/codexbar-fetch.log 2>&1 &";
-    try {
-      $os.cmd("sh", "-c", script).run();
-    } catch (err) {
-      return e.json(500, { ok: false, error: String(err) });
-    }
-  }
-  // started=false tells the UI a fetch is already in flight.
-  return e.json(200, { ok: true, started: !already });
+  const script =
+    "PB_URL=" + pbUrl + " nohup node " + fetcher +
+    " --once >>/tmp/codexbar-fetch.log 2>&1 &";
+  try {
+    $os.cmd("sh", "-c", script).run();
+  } catch (_) {}
 });
 
 // Ingest endpoint for the fetcher. Local-only app; no auth.
