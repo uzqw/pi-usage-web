@@ -46,6 +46,20 @@ appears as its own `pi@<host>` card: tokens and equivalent cost for
 today, deduplicated across session replays. Point it at this instance
 with `CODEXBAR_URL` and it just shows up — no backend changes needed.
 
+Raft's Pi SDK sessions can join the same machine card with a `pi-report`
+build supporting `PI_EXTRA_SESSIONS_DIRS`. Add to `~/.config/pi-report/env`
+(using the daemon's actual `SLOCK_HOME`):
+
+```ini
+PI_EXTRA_SESSIONS_DIRS=/home/me/wp/raft/.slockdev/raft/home/agents/*/.pi-sessions:/home/me/wp/raft/.slockdev/raft/home/agents/*/.builtin-sessions
+```
+
+Then `systemctl --user restart pi-report`. On Linux, `:` separates extra
+session directories/globs; globs expand every cycle to include new agents.
+Messages are deduplicated across all Pi session roots. Scan only original
+`.pi-sessions` / `.builtin-sessions`, not Raft's runtime mirrors or the whole
+workspace. The existing 15-minute cycle and Today/7d/All windows are reused.
+
 ### `models[]` payload and the `$ equiv` figure
 
 Each `pi@<host>` snapshot also carries a top-level `models` array (the

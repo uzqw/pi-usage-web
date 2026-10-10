@@ -112,12 +112,9 @@ routerAdd("GET", "/api/codexbar/history", (e) => {
 // full sweep takes tens of seconds. Spawns via `nohup ... &` so the goja
 // handler doesn't block and no zombie child is left behind.
 routerAdd("POST", "/api/codexbar/refresh", (e) => {
-  const hooksDir =
-    typeof __hooks === "string" ? __hooks : $os.getwd() + "/pb_hooks";
-  const fetcher = hooksDir + "/../fetcher/fetch.mjs";
-  // Always post back to loopback: the UI may be reached via 0.0.0.0 or a
-  // LAN IP, and e.request.host would send the fetcher somewhere dead.
-  const pbUrl = "http://127.0.0.1:8099";
+  // The fetcher needs Chrome, so it runs on the laptop, not on this host.
+  // remote.sh carries its own PB_URL (http://10.0.0.1:8099) and fetcher path.
+  const remote = "$HOME/wp/pi-usage-web/fetcher/remote.sh";
   // Guard on the node cmdline only — matching 'fetch.mjs' plainly also
   // matches this wrapper script itself, so nothing ever spawned. Match both
   // loop and --once processes: a manual refresh must never run concurrently
@@ -128,13 +125,10 @@ routerAdd("POST", "/api/codexbar/refresh", (e) => {
   // now living in the PB cron below (no resident loop), pkill can only
   // ever hit an actively-running --once round.
   try {
-    $os.cmd("pkill", "-f", "node .*fetch\\.mjs").run();
+    $os.cmd("sh", "-c", remote + " pkill").run();
   } catch (_) {}
-  const script =
-    "PB_URL=" + pbUrl + " nohup node " + fetcher +
-    " --once >>/tmp/codexbar-fetch.log 2>&1 &";
   try {
-    $os.cmd("sh", "-c", script).run();
+    $os.cmd("sh", "-c", remote + " start").run();
   } catch (err) {
     return e.json(500, { ok: false, error: String(err) });
   }
@@ -151,10 +145,8 @@ routerAdd("POST", "/api/codexbar/refresh", (e) => {
 // ponytail: dropped the reset-alignment wake and REFRESH_MINUTES cap
 // from the loop version — re-add if quota-reset freshness matters.
 cronAdd("codexbar-fetch", "*/2 * * * *", () => {
-  const hooksDir =
-    typeof __hooks === "string" ? __hooks : $os.getwd() + "/pb_hooks";
-  const fetcher = hooksDir + "/../fetcher/fetch.mjs";
-  const pbUrl = "http://127.0.0.1:8099";
+  // Fetcher lives on the laptop (Chrome); remote.sh ssh-triggers it there.
+  const remote = "$HOME/wp/pi-usage-web/fetcher/remote.sh";
 
   let lastActiveAt = null;
   try {
@@ -198,14 +190,11 @@ cronAdd("codexbar-fetch", "*/2 * * * *", () => {
 
   // Skip if a round is already running (e.g. a manual refresh).
   try {
-    $os.cmd("pgrep", "-f", "node .*fetch\\.mjs").run();
+    $os.cmd("sh", "-c", remote + " pgrep").run();
     return;
   } catch (_) {}
-  const script =
-    "PB_URL=" + pbUrl + " nohup node " + fetcher +
-    " --once >>/tmp/codexbar-fetch.log 2>&1 &";
   try {
-    $os.cmd("sh", "-c", script).run();
+    $os.cmd("sh", "-c", remote + " start").run();
   } catch (_) {}
 });
 
