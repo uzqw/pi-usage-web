@@ -61,26 +61,69 @@ function readMem() {
   };
 }
 
-// 没有传感器的机器（很多 VM）返回 []，UI 直接不渲染 Temp 行。
+// 温度：首选 hwmon（lm-sensors 的数据源）——CPU(k10temp/coretemp)、NVMe、
+// 内存条(spd5118) 都在这套接口下；没有 hwmon 的机器（很多 VM）退回
+// thermal_zone。过滤常量垃圾 acpitz 和逐核 Core N（详情用 sensors 看）。
 function readTemps() {
-  let zones = [];
-  try {
-    zones = readdirSync("/sys/class/thermal").filter((d) =>
-      d.startsWith("thermal_zone"),
-    );
-  } catch {
-    return [];
-  }
   const out = [];
-  for (const z of zones) {
+  let hwmonDirs = [];
+  try {
+    hwmonDirs = readdirSync("/sys/class/hwmon");
+  } catch {}
+  for (const h of hwmonDirs) {
+    if (!h.startsWith("hwmon")) continue;
+    const base = `/sys/class/hwmon/${h}`;
+    let dev;
     try {
-      const label = readFileSync(`/sys/class/thermal/${z}/type`, "utf8").trim();
-      const milli = Number(readFileSync(`/sys/class/thermal/${z}/temp`, "utf8").trim());
-      if (Number.isFinite(milli)) out.push({ label, celsius: +(milli / 1000).toFixed(1) });
+      dev = readFileSync(`${base}/name`, "utf8").trim();
     } catch {
-      // zone 无 type/temp —— 跳过
+      continue;
+    }
+    if (dev === "acpitz") continue;
+    let files = [];
+    try {
+      files = readdirSync(base);
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      if (!/^temp\d+_input$/.test(f)) continue;
+      try {
+        const milli = Number(readFileSync(`${base}/${f}`, "utf8").trim());
+        if (!Number.isFinite(milli) || milli <= 0) continue;
+        let label = f.replace(/_input$/, "");
+        try {
+          label = readFileSync(`${base}/${label}_label`, "utf8").trim();
+        } catch {}
+        if (/^Core \d+$/.test(label)) continue;
+        out.push({ label: `${dev} ${label}`, celsius: +(milli / 1000).toFixed(1) });
+      } catch {
+        // 单个传感器读失败 —— 跳过
+      }
     }
   }
+  // thermal_zone 兜底（部分 VM 只有这个）
+  if (!out.length) {
+    let zones = [];
+    try {
+      zones = readdirSync("/sys/class/thermal").filter((d) =>
+        d.startsWith("thermal_zone"),
+      );
+    } catch {
+      return [];
+    }
+    for (const z of zones) {
+      try {
+        const label = readFileSync(`/sys/class/thermal/${z}/type`, "utf8").trim();
+        const milli = Number(readFileSync(`/sys/class/thermal/${z}/temp`, "utf8").trim());
+        if (Number.isFinite(milli) && milli > 0)
+          out.push({ label, celsius: +(milli / 1000).toFixed(1) });
+      } catch {
+        // zone 无 type/temp —— 跳过
+      }
+    }
+  }
+  out.sort((a, b) => b.celsius - a.celsius);
   return out;
 }
 

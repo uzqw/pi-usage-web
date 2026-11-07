@@ -124,9 +124,9 @@ function MachineCard({
   history?: MachinePoint[];
 }) {
   const d = m.data || {};
-  const maxTemp = d.temps?.length
-    ? Math.max(...d.temps.map((t) => t.celsius))
-    : null;
+  const temps = d.temps || [];
+  const maxTemp = temps.length ? Math.max(...temps.map((t) => t.celsius)) : null;
+  const hottest = temps.find((t) => t.celsius === maxTemp);
   return (
     <div className="card status-ok" style={{ borderLeftColor: MACHINE_ACCENT }}>
       <h2>
@@ -214,11 +214,10 @@ function MachineCard({
           <div className="window-head">
             <span>Temp</span>
             <span
-              title={(d.temps || [])
-                .map((t) => `${t.label}: ${t.celsius}°C`)
-                .join("\n")}
+              title={temps.map((t) => `${t.label}: ${t.celsius}°C`).join("\n")}
             >
               {maxTemp}°C
+              {hottest && <span className="muted"> {hottest.label}</span>}
             </span>
           </div>
           {history && (
