@@ -383,6 +383,51 @@ routerAdd("GET", "/api/codexbar/machines", (e) => {
   return e.json(200, { machines: Object.values(latest) });
 });
 
+// Last-24h metrics history for one machine host, oldest first — feeds the
+// per-metric sparklines on the Machines cards. Reporters push every minute
+// (~1440 points/day), hence the 1500 cap.
+routerAdd("GET", "/api/codexbar/machine-history", (e) => {
+  const host = String(e.requestInfo().query.host || "");
+  if (!host) {
+    return e.json(400, { error: "host required" });
+  }
+  const since = new Date(Date.now() - 24 * 3600 * 1000)
+    .toISOString()
+    .replace("T", " ");
+  let records = [];
+  try {
+    records = $app.findRecordsByFilter(
+      "machine_metrics",
+      "host = {:host} && reportedAt >= {:since}",
+      "reportedAt",
+      1500,
+      0,
+      { host, since },
+    );
+  } catch (_) {
+    // collection not created yet — no machine has reported
+  }
+  const points = records.map((r) => {
+    const d = JSON.parse(r.getString("data") || "{}");
+    const net = d.net || {};
+    const temps = d.temps || [];
+    let temp = null;
+    for (const t of temps) {
+      if (temp == null || t.celsius > temp) temp = t.celsius;
+    }
+    return {
+      reportedAt: r.getString("reportedAt"),
+      cpu: d.cpu && d.cpu.usedPercent != null ? d.cpu.usedPercent : null,
+      mem: d.mem && d.mem.usedPercent != null ? d.mem.usedPercent : null,
+      rx: net.rxBps != null ? net.rxBps : null,
+      tx: net.txBps != null ? net.txBps : null,
+      temp: temp,
+      gpu: (d.gpus || []).map((g) => g.utilPercent),
+    };
+  });
+  return e.json(200, { host, points });
+});
+
 // Heartbeat: the UI POSTs here while the page is visible and the user is
 // interacting; the fetcher GETs it to pick its next sleep (adaptive
 // refresh — heartbeat recency stands in for the native menu-open recency).

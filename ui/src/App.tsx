@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import "./App.css";
 
 interface Window {
@@ -49,6 +50,29 @@ interface Machine {
   };
 }
 
+// 24h history for machine cards (GET /api/codexbar/machine-history):
+// one point per reporter cycle, temps collapsed to their max sensor.
+interface MachinePoint {
+  reportedAt: string;
+  cpu: number | null;
+  mem: number | null;
+  rx: number | null;
+  tx: number | null;
+  temp: number | null;
+  gpu: number[];
+}
+
+// Per-metric curve colors on the Machines cards (CPU/mem reuse the
+// bar-fill greens/blues so a curve and its bar read as the same metric).
+const CURVE = {
+  cpu: "#6f8cff",
+  mem: "#4cc38a",
+  gpu: "#a78bfa",
+  rx: "#f0c060",
+  tx: "#e0885c",
+  temp: "#ff6b6b",
+};
+
 const MACHINE_ACCENT = "#6f8cff";
 
 function fmtBps(n: number): string {
@@ -57,15 +81,18 @@ function fmtBps(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB/s`;
 }
 
-// One gauge row (label + percent + bar), shared by CPU/Mem/GPU.
+// One gauge row (label + percent + bar + optional sparkline), shared by
+// CPU/Mem/GPU.
 function Gauge({
   label,
   pct,
   extra,
+  spark,
 }: {
   label: string;
   pct: number | null | undefined;
   extra?: string;
+  spark?: ReactNode;
 }) {
   return (
     <div className="window">
@@ -84,11 +111,18 @@ function Gauge({
           />
         </div>
       )}
+      {spark}
     </div>
   );
 }
 
-function MachineCard({ m }: { m: Machine }) {
+function MachineCard({
+  m,
+  history,
+}: {
+  m: Machine;
+  history?: MachinePoint[];
+}) {
   const d = m.data || {};
   const maxTemp = d.temps?.length
     ? Math.max(...d.temps.map((t) => t.celsius))
@@ -102,21 +136,58 @@ function MachineCard({ m }: { m: Machine }) {
         {m.host}
       </h2>
       {d.cpu && (
-        <Gauge label="CPU" pct={d.cpu.usedPercent} extra={`${d.cpu.cores ?? "?"} 核`} />
+        <Gauge
+          label="CPU"
+          pct={d.cpu.usedPercent}
+          extra={`${d.cpu.cores ?? "?"} 核`}
+          spark={
+            history && (
+              <Spark
+                base={100}
+                series={[
+                  { values: history.map((p) => p.cpu), color: CURVE.cpu },
+                ]}
+              />
+            )
+          }
+        />
       )}
       {d.mem && (
         <Gauge
           label="Mem"
           pct={d.mem.usedPercent}
           extra={`${d.mem.usedMb}/${d.mem.totalMb} MB`}
+          spark={
+            history && (
+              <Spark
+                base={100}
+                series={[
+                  { values: history.map((p) => p.mem), color: CURVE.mem },
+                ]}
+              />
+            )
+          }
         />
       )}
-      {(d.gpus || []).map((g) => (
+      {(d.gpus || []).map((g, gi) => (
         <Gauge
           key={g.name}
           label={g.name}
           pct={g.utilPercent}
           extra={`${g.memUsedMb}/${g.memTotalMb} MB · ${g.tempC}°C`}
+          spark={
+            history && (
+              <Spark
+                base={100}
+                series={[
+                  {
+                    values: history.map((p) => p.gpu[gi] ?? null),
+                    color: CURVE.gpu,
+                  },
+                ]}
+              />
+            )
+          }
         />
       ))}
       {d.net && (
@@ -124,9 +195,18 @@ function MachineCard({ m }: { m: Machine }) {
           <div className="window-head">
             <span>Net</span>
             <span>
-              ↓{fmtBps(d.net.rxBps)} ↑{fmtBps(d.net.txBps)}
+              ↓<span style={{ color: CURVE.rx }}>{fmtBps(d.net.rxBps)}</span>{" "}
+              ↑<span style={{ color: CURVE.tx }}>{fmtBps(d.net.txBps)}</span>
             </span>
           </div>
+          {history && (
+            <Spark
+              series={[
+                { values: history.map((p) => p.rx), color: CURVE.rx },
+                { values: history.map((p) => p.tx), color: CURVE.tx },
+              ]}
+            />
+          )}
         </div>
       )}
       {maxTemp != null && (
@@ -141,6 +221,14 @@ function MachineCard({ m }: { m: Machine }) {
               {maxTemp}°C
             </span>
           </div>
+          {history && (
+            <Spark
+              base={100}
+              series={[
+                { values: history.map((p) => p.temp), color: CURVE.temp },
+              ]}
+            />
+          )}
         </div>
       )}
       <small className="fetched">
@@ -345,32 +433,67 @@ function isVisible(p: Provider): boolean {
   return true; // pending
 }
 
-// Plain-SVG sparkline of the first window's usedPercent over the last 24h.
-// Polyline points are scaled into a fixed viewBox; stroke uses the accent.
-function Sparkline({ points, color }: { points: HistoryPoint[]; color: string }) {
-  const values = points
-    .map((p) => p.windows?.[0]?.usedPercent)
-    .filter((v): v is number => v != null);
-  if (values.length < 2) return null;
+// Plain-SVG multi-series sparkline; values scaled into a fixed viewBox.
+// `base` floors the y-max (100 for percents so curves stay proportional to
+// a full bar; 0/absent for absolute rates like net throughput).
+function Spark({
+  series,
+  base,
+}: {
+  series: { values: (number | null)[]; color: string }[];
+  base?: number;
+}) {
+  const all = series.flatMap((s) =>
+    s.values.filter((v): v is number => v != null),
+  );
+  if (all.length < 2) return null;
+  const max = Math.max(base ?? 0, ...all);
+  if (max <= 0) return null;
+  const n = Math.max(...series.map((s) => s.values.length));
   const W = 100;
   const H = 24;
-  const max = Math.max(100, ...values);
-  const step = W / (values.length - 1);
-  const coords = values
-    .map((v, i) => `${(i * step).toFixed(1)},${(H - (v / max) * H).toFixed(1)}`)
-    .join(" ");
+  const step = n > 1 ? W / (n - 1) : W;
   return (
     <svg className="spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      <polyline
-        points={coords}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        vectorEffect="non-scaling-stroke"
-      />
+      {series.map((s, si) => {
+        const coords = s.values
+          .map((v, i) =>
+            v == null
+              ? null
+              : `${(i * step).toFixed(1)},${(H - (v / max) * H).toFixed(1)}`,
+          )
+          .filter((c): c is string => c != null)
+          .join(" ");
+        return coords ? (
+          <polyline
+            key={si}
+            points={coords}
+            fill="none"
+            stroke={s.color}
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        ) : null;
+      })}
     </svg>
+  );
+}
+
+// 24h sparkline of the first window's usedPercent over the last 24h
+// (provider cards). Polyline stroke uses the accent.
+function Sparkline({ points, color }: { points: HistoryPoint[]; color: string }) {
+  return (
+    <Spark
+      base={100}
+      series={[
+        {
+          values: points.map((p) => p.windows?.[0]?.usedPercent ?? null),
+          color,
+        },
+      ]}
+    />
   );
 }
 
@@ -825,6 +948,9 @@ function Card({
 function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [machines, setMachines] = useState<Machine[]>([]);
+  const [machineHistory, setMachineHistory] = useState<
+    Record<string, MachinePoint[]>
+  >({});
   const [history, setHistory] = useState<Record<string, HistoryPoint[]>>({});
   // Which pi@<host> the model panel is focused on (null = all machines).
   // Lifted out of ModelPanel so the pi card's "N models" button can drive it.
@@ -917,6 +1043,23 @@ function App() {
         .catch(() => {});
     }
   }, [providers, history]);
+
+  // Same for machine metric curves, one fetch per reported host.
+  useEffect(() => {
+    for (const m of machines) {
+      if (machineHistory[m.host]) continue;
+      fetch(
+        `/api/codexbar/machine-history?host=${encodeURIComponent(m.host)}`,
+      )
+        .then((r) => r.json())
+        .then((d) =>
+          setMachineHistory((h) =>
+            h[m.host] ? h : { ...h, [m.host]: d.points || [] },
+          ),
+        )
+        .catch(() => {});
+    }
+  }, [machines, machineHistory]);
 
   // Progress bar: count providers whose fetchedAt is newer than the click.
   // Poll every 2s until all update, the fetcher dies, or 90s elapse.
@@ -1055,7 +1198,7 @@ function App() {
           <h2>Machines</h2>
           <div className="cards">
             {machines.map((m) => (
-              <MachineCard key={m.host} m={m} />
+              <MachineCard key={m.host} m={m} history={machineHistory[m.host]} />
             ))}
           </div>
         </section>
