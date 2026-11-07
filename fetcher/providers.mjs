@@ -343,11 +343,55 @@ function kimiISO(v) {
 
 // ------------------------------------------------------------------ ollama
 
-// Ollama: quota windows only exist on the server-rendered settings page, so
-// replay the Chrome session cookie and parse the HTML (mirrors
-// OllamaUsageParser — "Monthly usage" / "Weekly usage" blocks, "N% used" or
-// "$x of $y used", reset via data-time).
+// API key first: /api/balance gives the account's remaining session/weekly
+// percentages (legacy plans) or monthly USD allowance (new plans) with no
+// browser. Falls back to the Chrome-session HTML scrape when no key exists.
+async function ollamaAPIKey() {
+  const fromEnv = (process.env.OLLAMA_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const key = String(JSON.parse(await readFile(PI_AUTH, "utf8"))["ollama-cloud"]?.key || "").trim();
+    if (key) return key;
+  } catch {}
+  return null;
+}
+
+async function fetchOllamaKey(key) {
+  const r = await guardedFetch("ollama", "https://ollama.com/api/balance", {
+    headers: { Authorization: `Bearer ${key}`, Accept: JSON_ACCEPT, "User-Agent": "CodexBar/1.0" },
+  });
+  const body = await r.json().catch(() => null);
+  if (r.status !== 200 || !body) throw err(`ollama balance HTTP ${r.status}`);
+  const inc = body.included || {};
+  const windows = [];
+  for (const [label, w] of [["Session", inc.session], ["Weekly", inc.weekly]]) {
+    if (!w || typeof w.remaining_percent !== "number") continue;
+    windows.push({
+      label,
+      usedPercent: Math.min(100, Math.max(0, Math.round((100 - w.remaining_percent) * 10) / 10)),
+      resetAt: w.resets_at || null,
+    });
+  }
+  const balance = inc.balance_usd;
+  const allowance = inc.allowance_usd;
+  if (typeof balance === "number" && typeof allowance === "number" && allowance > 0) {
+    const used = Math.max(0, allowance - balance);
+    windows.push({
+      label: "Monthly",
+      used,
+      limit: allowance,
+      usedPercent: Math.round((used / allowance) * 1000) / 10,
+      resetAt: inc.period?.until || null,
+    });
+  }
+  if (!windows.length) throw err("ollama: no quota windows in balance response");
+  const purchased = body.purchased?.balance_usd;
+  return { status: "ok", windows, credits: purchased > 0 ? { balance: purchased } : null };
+}
+
 export async function fetchOllama() {
+  const key = await ollamaAPIKey();
+  if (key) return fetchOllamaKey(key);
   const cookie = getCookieHeader("ollama.com");
   if (!cookie) throw noSession(0, "no ollama.com cookies in Chrome");
   const res = await guardedFetch("ollama", "https://ollama.com/settings", {
@@ -1033,7 +1077,41 @@ function normalizeDevin(body, org) {
 const OC_WORKSPACES_ID = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f";
 const OC_BILLING_ID = "c83b78a614689c38ebee981f9b39a8b377716db85c1fd7dbab604adc02d3313d";
 
+// Env first, then the credential pi agent already writes for opencode-go.
+async function openCodeAPIKey() {
+  const fromEnv = (process.env.OPENCODE_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const key = String(JSON.parse(await readFile(PI_AUTH, "utf8"))["opencode-go"]?.key || "").trim();
+    if (key) return key;
+  } catch {}
+  return null;
+}
+
+// API-key path: opencode zen/go quota, GET JSON with rolling/weekly/monthly
+// percentages. No browser, no server-fn constants to chase.
+async function fetchOpenCodeKey(key) {
+  const r = await guardedFetch("opencode", "https://opencode.ai/zen/go/v1/usage", {
+    headers: { Authorization: `Bearer ${key}`, Accept: JSON_ACCEPT, "User-Agent": "CodexBar/1.0" },
+  });
+  const body = await r.json().catch(() => null);
+  if (r.status !== 200 || !body?.usage) throw err(`opencode usage HTTP ${r.status}`);
+  const windows = [];
+  for (const [label, w] of Object.entries(body.usage)) {
+    if (!w || typeof w.percent !== "number") continue;
+    windows.push({
+      label: label.charAt(0).toUpperCase() + label.slice(1),
+      usedPercent: Math.min(100, Math.max(0, w.percent)),
+      resetAt: w.resetsAt || null,
+    });
+  }
+  if (!windows.length) throw err("opencode: no usage windows in response");
+  return { status: "ok", plan: "Zen Go", windows };
+}
+
 export async function fetchOpenCode() {
+  const key = await openCodeAPIKey();
+  if (key) return fetchOpenCodeKey(key);
   const cookie = getCookieHeader("opencode.ai");
   if (!cookie) throw noSession(0, "no opencode.ai cookies in Chrome");
   const srv = async (id, args, referer) => {
@@ -1346,12 +1424,10 @@ export const NO_SESSION_PROVIDERS = [
 export const PROVIDERS = [
   // ponytail: claude disabled — account banned; re-add entry to resume polling
   // { id: "claude", name: "Claude", fetch: fetchClaude },
-  { id: "codex", name: "Codex", fetch: fetchCodex },
   { id: "kimi", name: "Kimi", fetch: fetchKimi },
   { id: "ollama", name: "Ollama", fetch: fetchOllama },
   { id: "commandcode", name: "CommandCode", fetch: fetchCommandCode },
   { id: "grok", name: "Grok", fetch: fetchGrok },
-  { id: "devin", name: "Devin", fetch: fetchDevin },
   { id: "opencode", name: "OpenCode", fetch: fetchOpenCode },
   { id: "xai", name: "xAI", fetch: fetchXAI },
   { id: "openai", name: "OpenAI", fetch: fetchOpenAI },

@@ -22,7 +22,6 @@ routerAdd("GET", "/api/codexbar/providers", (e) => {
   const names = {
     // ponytail: claude removed — account banned by aggressive usage polling;
     // do NOT re-add without a >=15m jittered interval and no 429 retry.
-    codex: "Codex",
     kimi: "Kimi",
     ollama: "Ollama",
     commandcode: "CommandCode",
@@ -30,7 +29,6 @@ routerAdd("GET", "/api/codexbar/providers", (e) => {
     cursor: "Cursor",
     opencode: "OpenCode",
     manus: "Manus",
-    devin: "Devin",
     xai: "xAI",
     openai: "OpenAI",
   };

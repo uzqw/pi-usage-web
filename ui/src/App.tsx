@@ -208,10 +208,15 @@ function hasData(p: Provider): boolean {
   return win || cred;
 }
 
+// Providers dropped from the wall: no card and no "hidden:" note entry, even
+// though old snapshots for them are still in the store.
+const DROPPED = new Set(["codex", "devin"]);
+
 // Cards that actually render: skip no-session and ok-but-empty. A failed
 // fetch (error / stale_error) still renders when the backend kept the last
 // good windows, so a transient bridge miss doesn't make the card disappear.
 function isVisible(p: Provider): boolean {
+  if (DROPPED.has(p.id)) return false;
   if (p.status === "no-session") return false;
   if (p.status === "error" || p.status === "stale_error" || p.status === "ok") {
     return hasData(p);
@@ -934,7 +939,9 @@ function App() {
           ))}
       </div>
       {(() => {
-        const hidden = providers.filter((p) => !isVisible(p));
+        const hidden = providers.filter(
+          (p) => !isVisible(p) && !DROPPED.has(p.id),
+        );
         if (hidden.length === 0) return null;
         return (
           <p className="hidden-note">
