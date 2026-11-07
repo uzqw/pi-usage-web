@@ -1,0 +1,15 @@
+[Unit]
+Description=machine metrics reporter for pi-usage-web (cpu/mem/net/temp/gpu)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/wp/pi-usage-web/reporter/report.mjs
+# env 文件可选：CODEXBAR_URL / MACHINE_REPORT_ID / MACHINE_REPORT_INTERVAL_MINUTES 都有默认值。
+EnvironmentFile=-%h/.config/machine-report/env
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -303,6 +303,86 @@ routerAdd("POST", "/api/codexbar/snapshot", (e) => {
   return e.json(200, { ok: true, status: fallback ? "stale_error" : status });
 });
 
+// Machine metrics ingest — reporter/report.mjs pushes one snapshot per
+// cycle (cpu/mem/net/temps/gpus). Same trust model as /snapshot: local-only
+// app, no auth. History is pruned to 24h per host on every ingest (reporters
+// push every minute, so steady state deletes ~1 record per cycle).
+routerAdd("POST", "/api/codexbar/machine", (e) => {
+  const body = e.requestInfo().body;
+  const host = String(body.host || "");
+  if (!host || !body.data || typeof body.data !== "object") {
+    return e.json(400, { error: "host and data required" });
+  }
+  let collection;
+  try {
+    collection = $app.findCollectionByNameOrId("machine_metrics");
+  } catch (_) {
+    collection = new Collection({
+      name: "machine_metrics",
+      type: "base",
+      listRule: "",
+      viewRule: "",
+      fields: [
+        { name: "host", type: "text", required: true },
+        { name: "data", type: "json" },
+        { name: "reportedAt", type: "date", required: true },
+      ],
+      indexes: [
+        "CREATE INDEX idx_machine_host ON machine_metrics (host, reportedAt)",
+      ],
+    });
+    $app.save(collection);
+  }
+  const record = new Record(collection);
+  record.set("host", host);
+  record.set("data", body.data);
+  record.set("reportedAt", new Date().toISOString());
+  $app.save(record);
+  try {
+    const cutoff = new Date(Date.now() - 24 * 3600 * 1000)
+      .toISOString()
+      .replace("T", " ");
+    const old = $app.findRecordsByFilter(
+      "machine_metrics",
+      "host = {:host} && reportedAt < {:cutoff}",
+      "reportedAt",
+      200,
+      0,
+      { host, cutoff },
+    );
+    for (const r of old) $app.deleteRecord(r);
+  } catch (_) {}
+  return e.json(200, { ok: true });
+});
+
+// Latest metrics snapshot per machine host, for the Machines card wall.
+routerAdd("GET", "/api/codexbar/machines", (e) => {
+  let records = [];
+  try {
+    records = $app.findRecordsByFilter(
+      "machine_metrics",
+      "id != ''",
+      "-reportedAt",
+      500,
+      0,
+    );
+  } catch (_) {
+    // collection not created yet — no machine has reported
+  }
+  const latest = {};
+  for (const r of records) {
+    const h = r.getString("host");
+    if (!latest[h]) {
+      latest[h] = {
+        host: h,
+        data: JSON.parse(r.getString("data") || "{}"),
+        reportedAt: r.getString("reportedAt"),
+      };
+    }
+  }
+  return e.json(200, { machines: Object.values(latest) });
+});
+
 // Heartbeat: the UI POSTs here while the page is visible and the user is
 // interacting; the fetcher GETs it to pick its next sleep (adaptive
 // refresh — heartbeat recency stands in for the native menu-open recency).

@@ -30,6 +30,127 @@ interface HistoryPoint {
   windows?: { label: string; usedPercent?: number | null }[];
 }
 
+// Machine metrics (reporter/report.mjs pushes these — Netdata 瘦身版).
+interface Machine {
+  host: string;
+  reportedAt: string;
+  data: {
+    cpu?: { usedPercent: number | null; cores?: number };
+    mem?: { usedPercent: number | null; usedMb: number; totalMb: number };
+    net?: { rxBps: number; txBps: number };
+    temps?: { label: string; celsius: number }[];
+    gpus?: {
+      name: string;
+      utilPercent: number;
+      memUsedMb: number;
+      memTotalMb: number;
+      tempC: number;
+    }[];
+  };
+}
+
+const MACHINE_ACCENT = "#6f8cff";
+
+function fmtBps(n: number): string {
+  if (n < 1024) return `${n} B/s`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB/s`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB/s`;
+}
+
+// One gauge row (label + percent + bar), shared by CPU/Mem/GPU.
+function Gauge({
+  label,
+  pct,
+  extra,
+}: {
+  label: string;
+  pct: number | null | undefined;
+  extra?: string;
+}) {
+  return (
+    <div className="window">
+      <div className="window-head">
+        <span>{label}</span>
+        <span>
+          {pct != null ? `${pct}%` : "–"}
+          {extra && <span className="muted"> · {extra}</span>}
+        </span>
+      </div>
+      {pct != null && (
+        <div className="bar">
+          <div
+            className={barClass(pct)}
+            style={{ width: `${Math.min(100, pct)}%` }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MachineCard({ m }: { m: Machine }) {
+  const d = m.data || {};
+  const maxTemp = d.temps?.length
+    ? Math.max(...d.temps.map((t) => t.celsius))
+    : null;
+  return (
+    <div className="card status-ok" style={{ borderLeftColor: MACHINE_ACCENT }}>
+      <h2>
+        <span className="avatar" style={{ background: MACHINE_ACCENT }}>
+          {m.host.charAt(0).toUpperCase()}
+        </span>
+        {m.host}
+      </h2>
+      {d.cpu && (
+        <Gauge label="CPU" pct={d.cpu.usedPercent} extra={`${d.cpu.cores ?? "?"} 核`} />
+      )}
+      {d.mem && (
+        <Gauge
+          label="Mem"
+          pct={d.mem.usedPercent}
+          extra={`${d.mem.usedMb}/${d.mem.totalMb} MB`}
+        />
+      )}
+      {(d.gpus || []).map((g) => (
+        <Gauge
+          key={g.name}
+          label={g.name}
+          pct={g.utilPercent}
+          extra={`${g.memUsedMb}/${g.memTotalMb} MB · ${g.tempC}°C`}
+        />
+      ))}
+      {d.net && (
+        <div className="window">
+          <div className="window-head">
+            <span>Net</span>
+            <span>
+              ↓{fmtBps(d.net.rxBps)} ↑{fmtBps(d.net.txBps)}
+            </span>
+          </div>
+        </div>
+      )}
+      {maxTemp != null && (
+        <div className="window">
+          <div className="window-head">
+            <span>Temp</span>
+            <span
+              title={(d.temps || [])
+                .map((t) => `${t.label}: ${t.celsius}°C`)
+                .join("\n")}
+            >
+              {maxTemp}°C
+            </span>
+          </div>
+        </div>
+      )}
+      <small className="fetched">
+        reported {relTime(m.reportedAt)}
+        {isStale(m.reportedAt) && <span className="stale">stale</span>}
+      </small>
+    </div>
+  );
+}
+
 // Per-(provider,model) usage windows pushed by pi-report (pi@<host> cards).
 // A missing window key means "no data in that window".
 interface ModelUsage {
@@ -703,6 +824,7 @@ function Card({
 
 function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [machines, setMachines] = useState<Machine[]>([]);
   const [history, setHistory] = useState<Record<string, HistoryPoint[]>>({});
   // Which pi@<host> the model panel is focused on (null = all machines).
   // Lifted out of ModelPanel so the pi card's "N models" button can drive it.
@@ -730,11 +852,17 @@ function App() {
     Map<string, ReturnType<typeof setTimeout>>
   >(new Map());
 
-  const load = () =>
+  const load = () => {
     fetch("/api/codexbar/providers")
       .then((r) => r.json())
       .then((d) => setProviders(d.providers))
       .catch((e) => setError(String(e)));
+    // 机器指标是 reporter 推上来的，失败不影响用量卡片墙
+    fetch("/api/codexbar/machines")
+      .then((r) => r.json())
+      .then((d) => setMachines(d.machines || []))
+      .catch(() => {});
+  };
 
   // Poll only while the tab is visible; reload on return to foreground.
   useEffect(() => {
@@ -922,6 +1050,16 @@ function App() {
         machine={machine}
         setMachine={setMachine}
       />
+      {machines.length > 0 && (
+        <section className="machines">
+          <h2>Machines</h2>
+          <div className="cards">
+            {machines.map((m) => (
+              <MachineCard key={m.host} m={m} />
+            ))}
+          </div>
+        </section>
+      )}
       <div className="cards">
         {[...providers]
           .filter(isVisible)

@@ -96,6 +96,27 @@ pi's per-message list prices; subscriptions, credits and free tiers are
 not deducted from it. A model with no recorded price counts as `$0`
 and renders as a dim `–` rather than `$0.00`.
 
+## Machine metrics (Netdata 思想的瘦身版)
+
+`reporter/report.mjs` 每台机器采一轮 **CPU / 内存 / 网络 / 温度 / 显卡**
+（直读 `/proc`、`/sys/class/thermal`、`nvidia-smi`，零依赖），POST 到
+`/api/codexbar/machine`，UI 在卡片墙上方渲染成 **Machines** 区块（每台机器
+一张卡）。后端保留 24h 历史后自动裁剪。
+
+部署（以 pi-report 同样的方式，systemd user service）：
+
+```sh
+mkdir -p ~/.config/machine-report
+cp reporter/machine-report.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now machine-report
+```
+
+Env 覆盖写 `~/.config/machine-report/env`：`CODEXBAR_URL`（默认
+`http://10.0.0.1:8099`）、`MACHINE_REPORT_ID`（默认 `hostname`）、
+`MACHINE_REPORT_INTERVAL_MINUTES`（默认 1）。机器没有温度传感器或
+NVIDIA 显卡时对应行自动消失。需要 Node 18+（hub 10.0.0.1 要监控自己的话
+先 `sudo apt install nodejs`）。
+
 ## Requirements
 
 - Node 20+ (fetcher and UI build).

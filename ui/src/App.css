@@ -564,3 +564,17 @@ table.modeltable {
     margin-top: 0.35rem;
   }
 }
+
+/* Machine metrics wall (reporter/report.mjs). Cards reuse the provider card
+   styles wholesale; only the section heading and dim unit text are new. */
+.machines {
+  margin-bottom: 0.6rem;
+  flex-shrink: 0;
+}
+.machines h2 {
+  margin: 0 0 0.4rem;
+  font-size: 0.85rem;
+}
+.card .muted {
+  color: var(--text-muted);
+}
