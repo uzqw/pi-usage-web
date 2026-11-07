@@ -59,7 +59,19 @@ interface MachinePoint {
   rx: number | null;
   tx: number | null;
   temp: number | null;
+  temps?: { label: string; celsius: number }[];
   gpu: number[];
+}
+
+// 芯片名翻成人话（悬停 title 保留原始标签）。k10temp/coretemp=CPU，
+// nvme=SSD，spd5118=DIMM 内存条。
+function tempLabel(label: string): string {
+  if (label.startsWith("k10temp ")) return `CPU ${label.slice(8)}`;
+  if (label.startsWith("coretemp ")) return `CPU ${label.slice(9)}`;
+  if (label === "nvme Composite") return "SSD";
+  if (label.startsWith("nvme ")) return `SSD ${label.slice(5)}`;
+  if (label.startsWith("spd5118")) return `DIMM${label.slice(7)}`;
+  return label;
 }
 
 // Per-metric curve colors on the Machines cards (CPU/mem reuse the
@@ -125,8 +137,6 @@ function MachineCard({
 }) {
   const d = m.data || {};
   const temps = d.temps || [];
-  const maxTemp = temps.length ? Math.max(...temps.map((t) => t.celsius)) : null;
-  const hottest = temps.find((t) => t.celsius === maxTemp);
   return (
     <div className="card status-ok" style={{ borderLeftColor: MACHINE_ACCENT }}>
       <h2>
@@ -209,27 +219,30 @@ function MachineCard({
           )}
         </div>
       )}
-      {maxTemp != null && (
-        <div className="window">
+      {/* 每个传感器一行：名字 + 温度 + 自己的 24h 曲线，按温度降序 */}
+      {temps.map((t) => (
+        <div className="window" key={t.label}>
           <div className="window-head">
-            <span>Temp</span>
-            <span
-              title={temps.map((t) => `${t.label}: ${t.celsius}°C`).join("\n")}
-            >
-              {maxTemp}°C
-              {hottest && <span className="muted"> {hottest.label}</span>}
-            </span>
+            <span title={t.label}>{tempLabel(t.label)}</span>
+            <span>{t.celsius}°C</span>
           </div>
           {history && (
             <Spark
               base={100}
               series={[
-                { values: history.map((p) => p.temp), color: CURVE.temp },
+                {
+                  values: history.map(
+                    (p) =>
+                      (p.temps || []).find((x) => x.label === t.label)
+                        ?.celsius ?? null,
+                  ),
+                  color: CURVE.temp,
+                },
               ]}
             />
           )}
         </div>
-      )}
+      ))}
       <small className="fetched">
         reported {relTime(m.reportedAt)}
         {isStale(m.reportedAt) && <span className="stale">stale</span>}

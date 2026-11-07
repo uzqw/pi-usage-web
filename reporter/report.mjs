@@ -123,6 +123,14 @@ function readTemps() {
       }
     }
   }
+  // 同名传感器（双 NVMe、多条内存）加 #2 后缀——标签是前端曲线匹配的 key，
+  // 必须稳定唯一（hwmon 枚举顺序跨重启稳定）。
+  const counts = {};
+  for (const t of out) {
+    const n = (counts[t.label] || 0) + 1;
+    counts[t.label] = n;
+    if (n > 1) t.label = `${t.label} #${n}`;
+  }
   out.sort((a, b) => b.celsius - a.celsius);
   return out;
 }

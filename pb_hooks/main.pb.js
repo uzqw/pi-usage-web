@@ -422,6 +422,7 @@ routerAdd("GET", "/api/codexbar/machine-history", (e) => {
       rx: net.rxBps != null ? net.rxBps : null,
       tx: net.txBps != null ? net.txBps : null,
       temp: temp,
+      temps: temps.map((t) => ({ label: t.label, celsius: t.celsius })),
       gpu: (d.gpus || []).map((g) => g.utilPercent),
     };
   });
